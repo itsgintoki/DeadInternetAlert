@@ -1,5 +1,6 @@
 import { pgEnum, pgTable, text, timestamp, uuid, jsonb } from "drizzle-orm/pg-core";
-import { UsersTable } from "./users.models.js";
+// import { UsersTable } from "./users.models.js";
+
 
 export const checkJobsStatusEnum = pgEnum('checkjobs_status', [
     'WAITING',
