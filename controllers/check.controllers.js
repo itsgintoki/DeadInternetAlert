@@ -2,6 +2,11 @@ import { getCached, setCached } from "../utils/cache.utils.js";
 import { fetchSubredditAbout, searchRedditPosts, formatRedditData, countRecentPosts } from "../utils/reddit.utils.js";
 import { pingUrl } from "../utils/urlCheck.utils.js";
 
+import { watchListTable, watchlistTypeEnum } from '../models/watchlist.models.js';
+import { checkJobsTable, checkJobsStatusEnum } from '../models/checkjobs.models.js';
+import { checkQueue } from '../queues/check.queues.js';
+import { eq } from 'drizzle-orm';
+
 function mapRedditError(err, res, next, target) {
   if (err.code === "ECONNABORTED") {
     return res.status(504).json({ error: `Timed out reaching Reddit for "${target}"` });
@@ -73,3 +78,30 @@ export async function checkMeme(req, res, next) {
     mapRedditError(err, res, next, format);
   }
 }
+
+
+export const triggerCheck = async (req, res, next) => {
+  try {
+    const { watchlistId } = req.body;
+    if (!watchlistId) return res.status(400).json({ message: 'watchlistId is required' });
+
+    const [entry] = await db.select().from(watchlist).where(eq(watchlist.id, watchlistId));
+    if (!entry) return res.status(404).json({ message: 'Watchlist entry not found' });
+
+    const [checkJob] = await db
+      .insert(checkJobs)
+      .values({ type: entry.type, payload: { watchlistId: entry.id, target: entry.target }, status: 'queued' })
+      .returning();
+
+    await checkQueue.add('check', {
+      checkJobId: checkJob.id,
+      watchlistId: entry.id,
+      type: entry.type,
+      target: entry.target,
+    });
+
+    res.status(201).json({ message: 'Check queued', checkJobId: checkJob.id });
+  } catch (err) {
+    next(err);
+  }
+};
