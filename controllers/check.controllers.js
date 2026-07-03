@@ -1,3 +1,4 @@
+import { db } from '../db/index.js';
 import { getCached, setCached } from "../utils/cache.utils.js";
 import { fetchSubredditAbout, searchRedditPosts, formatRedditData, countRecentPosts } from "../utils/reddit.utils.js";
 import { pingUrl } from "../utils/urlCheck.utils.js";
@@ -85,12 +86,12 @@ export const triggerCheck = async (req, res, next) => {
     const { watchlistId } = req.body;
     if (!watchlistId) return res.status(400).json({ message: 'watchlistId is required' });
 
-    const [entry] = await db.select().from(watchlist).where(eq(watchlist.id, watchlistId));
+    const [entry] = await db.select().from(watchListTable).where(eq(watchListTable.id, watchlistId));
     if (!entry) return res.status(404).json({ message: 'Watchlist entry not found' });
 
     const [checkJob] = await db
-      .insert(checkJobs)
-      .values({ type: entry.type, payload: { watchlistId: entry.id, target: entry.target }, status: 'queued' })
+      .insert(checkJobsTable)
+      .values({ type: entry.type, payload: { watchlistId: entry.id, target: entry.target }, status: 'WAITING' })
       .returning();
 
     await checkQueue.add('check', {
@@ -105,3 +106,15 @@ export const triggerCheck = async (req, res, next) => {
     next(err);
   }
 };
+
+export const getCheckStatus = async(req,res,next) => {
+  try{
+    const {id} = req.params;
+    const [job] = await db.select().from(checkJobsTable).where(eq(checkJobsTable.id,id));
+    if(!job) return res.status(404).json({message:'Check Job not found!'});
+    res.status(200).json(job);
+  }catch(err){
+    next(err);
+  }
+
+}

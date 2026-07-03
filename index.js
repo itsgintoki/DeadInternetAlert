@@ -4,6 +4,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import checkRoutes from './routes/check.routes.js';
+import './queues/check.worker.js';
 import watchlistRoutes from './routes/watchlist.routes.js';
 import { errorHandler } from './middlewares/errorHandler.middlewares.js';
 

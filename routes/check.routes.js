@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { checkSubreddit, checkUrl, checkMeme,triggerCheck } from "../controllers/check.controllers.js";
+import { checkSubreddit, checkUrl, checkMeme,triggerCheck,getCheckStatus } from "../controllers/check.controllers.js";
 import { authenticate, authorize } from '../middlewares/auth.middlewares.js';
 
 
@@ -10,6 +10,7 @@ router.get("/subreddit", checkSubreddit);
 router.get("/url", checkUrl);
 router.get("/meme", checkMeme);
 router.post('/trigger', authenticate, authorize('admin'), triggerCheck);
+router.get('/:id', authenticate, getCheckStatus);
 
 
 export default router;

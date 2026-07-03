@@ -22,7 +22,8 @@ export const removeFromWatchlist = async (req, res, next) => {
         const { id } = req.params;
         const [deleted] = await db
             .delete(watchListTable)
-            .where(and(eq(watchListTable.id, id), eq(watchListTable.userId, req.user.id)));
+            .where(and(eq(watchListTable.id, id), eq(watchListTable.userId, req.user.id)))
+            .returning();
 
         if (!deleted) return res.status(404).json({ message: 'Watchlist entry not found!' })
         return res.status(200).json({ message: 'Removed', id: deleted.id })
