@@ -1,6 +1,6 @@
 import { db } from '../db/index.js';
 import { getCached, setCached } from "../utils/cache.utils.js";
-import { fetchSubredditAbout, searchRedditPosts, formatRedditData, countRecentPosts } from "../utils/reddit.utils.js";
+import { fetchGithubRepo, fetchGithubCommits, formatGithubData } from "../utils/github.utils.js";
 import { pingUrl } from "../utils/urlCheck.utils.js";
 
 import { watchListTable, watchlistTypeEnum } from '../models/watchlist.models.js';
@@ -8,40 +8,48 @@ import { checkJobsTable, checkJobsStatusEnum } from '../models/checkjobs.models.
 import { checkQueue } from '../queues/check.queues.js';
 import { eq } from 'drizzle-orm';
 
-function mapRedditError(err, res, next, target) {
-  if (err.code === "ECONNABORTED") {
-    return res.status(504).json({ error: `Timed out reaching Reddit for "${target}"` });
+function mapGithubError(err, res, next, target) {
+  if (err.code === "ECONNABORTED" || err.message?.includes("timeout")) {
+    return res.status(504).json({ error: `Timed out reaching GitHub for "${target}"` });
   }
   if (err.response) {
     const status = err.response.status;
     if (status === 404) {
-      return res.status(404).json({ error: `No Reddit data found for "${target}"` });
+      return res.status(404).json({ error: `No GitHub repository found for "${target}"` });
     }
-    return res.status(502).json({ error: `Reddit returned an unexpected error (${status})` });
+    if (status === 403) {
+      return res.status(403).json({ error: `GitHub API rate limit exceeded or forbidden for "${target}"` });
+    }
+    return res.status(502).json({ error: `GitHub returned an unexpected error (${status})` });
   }
   return next(err);
 }
 
-export async function checkSubreddit(req, res, next) {
-  const { name } = req.query;
-  if (!name) return res.status(400).json({ error: "name query param is required" });
+export async function checkRepo(req, res, next) {
+  const { target } = req.query;
+  if (!target) return res.status(400).json({ error: "target query param is required" });
 
-  const cacheKey = `check:subreddit:${name}`;
+  const parts = target.split('/');
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    return res.status(400).json({ error: "target must be in 'owner/repo' format" });
+  }
+
+  const [owner, repoName] = parts;
+  const cacheKey = `check:repo:${target}`;
+  
   try {
     const cached = await getCached(cacheKey);
     if (cached) return res.json(cached);
 
-    const raw = await fetchSubredditAbout(name);
-    const result = formatRedditData(raw);
+    const repoData = await fetchGithubRepo(owner, repoName);
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const commits = await fetchGithubCommits(owner, repoName, sevenDaysAgo);
+
+    const result = formatGithubData(repoData, commits);
     await setCached(cacheKey, result);
     res.json(result);
   } catch (err) {
-    if (err.response?.status === 403) {
-      const result = { name, subscribers: null, type: "private", over18: null, url: null };
-      await setCached(cacheKey, result);
-      return res.json(result);
-    }
-    mapRedditError(err, res, next, name);
+    mapGithubError(err, res, next, target);
   }
 }
 
@@ -59,24 +67,6 @@ export async function checkUrl(req, res, next) {
     res.json(result);
   } catch (err) {
     next(err);
-  }
-}
-
-export async function checkMeme(req, res, next) {
-  const { format } = req.query;
-  if (!format) return res.status(400).json({ error: "format query param is required" });
-
-  const cacheKey = `check:meme:${format}`;
-  try {
-    const cached = await getCached(cacheKey);
-    if (cached) return res.json(cached);
-
-    const raw = await searchRedditPosts(format);
-    const result = countRecentPosts(raw, format);
-    await setCached(cacheKey, result);
-    res.json(result);
-  } catch (err) {
-    mapRedditError(err, res, next, format);
   }
 }
 

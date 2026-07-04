@@ -4,27 +4,22 @@ import { db } from '../db/index.js';
 import { checkJobsTable } from "../models/checkjobs.models.js";
 import { eq } from "drizzle-orm";
 import { pingUrl } from '../utils/urlCheck.utils.js';
-import { fetchSubredditAbout, formatRedditData, searchRedditPosts, countRecentPosts } from '../utils/reddit.utils.js';
+import { fetchGithubRepo, fetchGithubCommits, formatGithubData } from '../utils/github.utils.js';
 
 async function runCheck(type, target) {
     switch (type) {
         case 'url':
             return await pingUrl(target);
 
-        case 'subreddit':
-            try {
-                const raw = await fetchSubredditAbout(target);
-                return formatRedditData(raw);
-            } catch (err) {
-                if (err.response?.status === 403) {
-                    return { name: target, subscribers: null, type: 'private', over18: null, url: null };
-                }
-                throw err;
+        case 'repo': {
+            const [owner, repoName] = target.split('/');
+            if (!owner || !repoName) {
+                throw new Error(`Invalid target format for repo: ${target}`);
             }
-
-        case 'meme': {
-            const raw = await searchRedditPosts(target);
-            return countRecentPosts(raw, target);
+            const repoData = await fetchGithubRepo(owner, repoName);
+            const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+            const commits = await fetchGithubCommits(owner, repoName, sevenDaysAgo);
+            return formatGithubData(repoData, commits);
         }
 
         default:

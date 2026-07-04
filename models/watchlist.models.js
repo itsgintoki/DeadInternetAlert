@@ -1,7 +1,7 @@
 import { pgTable, uuid, text, timestamp, pgEnum } from "drizzle-orm/pg-core";
 import { UsersTable } from "./users.models.js";
 
-export const watchlistTypeEnum = pgEnum('watchlist_type', ['url', 'subreddit', 'meme']);
+export const watchlistTypeEnum = pgEnum('watchlist_type', ['url', 'repo']);
 
 export const watchListTable = pgTable('watch_list_table', {
     id: uuid("id")
