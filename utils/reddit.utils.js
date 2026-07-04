@@ -30,7 +30,7 @@ export function formatRedditData(rawHtml) {
         subscribers: "unavailable (requires Reddit API key)",
         type: "public",
         over18,
-        url: `/r/`
+        url: `/r/${name}`
     };
 }
 
