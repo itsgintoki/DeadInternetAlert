@@ -89,6 +89,9 @@ export const triggerCheck = async (req, res, next) => {
       watchlistId: entry.id,
       type: entry.type,
       target: entry.target,
+    }, {
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 2000 }
     });
 
     res.status(201).json({ message: 'Check queued', checkJobId: checkJob.id });
@@ -97,14 +100,56 @@ export const triggerCheck = async (req, res, next) => {
   }
 };
 
-export const getCheckStatus = async(req,res,next) => {
-  try{
-    const {id} = req.params;
-    const [job] = await db.select().from(checkJobsTable).where(eq(checkJobsTable.id,id));
-    if(!job) return res.status(404).json({message:'Check Job not found!'});
+export const getCheckStatus = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const [job] = await db.select().from(checkJobsTable).where(eq(checkJobsTable.id, id));
+    if (!job) return res.status(404).json({ message: 'Check Job not found!' });
     res.status(200).json(job);
-  }catch(err){
+  } catch (err) {
     next(err);
   }
+};
 
-}
+export const getFailedChecks = async (req, res, next) => {
+  try {
+    const failedJobs = await db
+      .select()
+      .from(checkJobsTable)
+      .where(eq(checkJobsTable.status, 'FAILED'));
+    res.status(200).json(failedJobs);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const retryCheck = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const [job] = await db.select().from(checkJobsTable).where(eq(checkJobsTable.id, id));
+
+    if (!job) return res.status(404).json({ message: 'Check job not found' });
+    if (job.status !== 'FAILED') {
+      return res.status(400).json({ message: 'Only failed check jobs can be retried' });
+    }
+
+    await db
+      .update(checkJobsTable)
+      .set({ status: 'WAITING', result: null })
+      .where(eq(checkJobsTable.id, id));
+
+    await checkQueue.add('check', {
+      checkJobId: job.id,
+      watchlistId: job.payload.watchlistId,
+      type: job.type,
+      target: job.payload.target,
+    }, {
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 2000 }
+    });
+
+    res.status(200).json({ message: 'Retry queued', checkJobId: job.id });
+  } catch (err) {
+    next(err);
+  }
+};
