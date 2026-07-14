@@ -8,6 +8,7 @@ import { eq } from "drizzle-orm";
 import { pingUrl } from '../utils/urlCheck.utils.js';
 import { fetchGithubRepo, fetchGithubCommits, formatGithubData } from '../utils/github.utils.js';
 import { sendAlertEmail } from '../utils/email.utils.js';
+import { notificationQueue } from "./check.queues.js";
 import axios from "axios";
 
 async function runCheck(type, target) {
@@ -71,6 +72,7 @@ export const checkWorker = new Worker(
         const [watchlistEntry] = await db
             .select({
                 id: watchListTable.id,
+                userId: watchListTable.userId,
                 target: watchListTable.target,
                 lastStatus: watchListTable.lastStatus,
                 email: UsersTable.email
@@ -88,15 +90,23 @@ export const checkWorker = new Worker(
         const currentStatus = computeStatus(type, result);
         const oldStatus = watchlistEntry.lastStatus;
 
-        if (oldStatus !== null && oldStatus !== currentStatus) {
-            const subject = `ALERT: Status changed for ${target}`;
-            const textContent = `Hello,\n\nThe status of your watched item "${target}" (${type}) has changed from "${oldStatus}" to "${currentStatus}".\n\nChecked At: ${new Date().toISOString()}\n\nBest,\nDeadInternetAlert Tracker`;
-            await sendAlertEmail(watchlistEntry.email, subject, textContent);
-        }
+        if (oldStatus !== currentStatus) {
+            await db.update(watchListTable)
+                .set({ lastStatus: currentStatus, statusChangedAt: new Date() })
+                .where(eq(watchListTable.id, watchlistId));
 
-        await db.update(watchListTable)
-            .set({ lastStatus: currentStatus })
-            .where(eq(watchListTable.id, watchlistId));
+            if (oldStatus !== null) {
+                const subject = `ALERT: Status changed for ${target}`;
+                const textContent = `Hello,\n\nThe status of your watched item "${target}" (${type}) has changed from "${oldStatus}" to "${currentStatus}".\n\nChecked At: ${new Date().toISOString()}\n\nBest,\nDeadInternetAlert Tracker`;
+                await sendAlertEmail(watchlistEntry.email, subject, textContent);
+
+                await notificationQueue.add("notify", {
+                    userId: watchlistEntry.userId,
+                    watchlistId: watchlistEntry.id,
+                    message: `Watchlist item "${target}" status changed from "${oldStatus}" to "${currentStatus}"`
+                });
+            }
+        }
 
         return result;
     },

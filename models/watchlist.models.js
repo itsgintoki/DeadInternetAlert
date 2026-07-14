@@ -18,6 +18,8 @@ export const watchListTable = pgTable('watch_list_table', {
 
     lastStatus: text("last_status"),
 
+    statusChangedAt: timestamp("status_changed_at"),
+
     createdAt: timestamp("created_at")
         .defaultNow()
         .notNull()

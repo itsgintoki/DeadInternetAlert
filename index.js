@@ -5,7 +5,11 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import checkRoutes from './routes/check.routes.js';
 import './queues/check.worker.js';
+import './queues/notification.worker.js';
+import './queues/email.worker.js';
+import './queues/cron.worker.js';
 import watchlistRoutes from './routes/watchlist.routes.js';
+import notificationRoutes from './routes/notification.routes.js';
 import { errorHandler } from './middlewares/errorHandler.middlewares.js';
 
 import authRoutes from './routes/auth.routes.js';
@@ -21,6 +25,7 @@ app.use('/auth', authRoutes);
 app.use('/check', checkRoutes);
 app.use('/checks', checkRoutes);
 app.use('/watchlist', watchlistRoutes);
+app.use('/notifications', notificationRoutes);
 
 app.use(errorHandler);
 
