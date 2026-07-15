@@ -4,10 +4,6 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import checkRoutes from './routes/check.routes.js';
-import './queues/check.worker.js';
-import './queues/notification.worker.js';
-import './queues/email.worker.js';
-import './queues/cron.worker.js';
 import watchlistRoutes from './routes/watchlist.routes.js';
 import notificationRoutes from './routes/notification.routes.js';
 import { errorHandler } from './middlewares/errorHandler.middlewares.js';
@@ -18,7 +14,7 @@ import { createBullBoard } from '@bull-board/api';
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
 import { ExpressAdapter } from '@bull-board/express';
 import { checkQueue, notificationQueue, emailQueue } from './queues/check.queues.js';
-import { cronQueue } from './queues/cron.worker.js';
+import { cronQueue } from './queues/cron.queue.js';
 import { authenticate, authorize } from './middlewares/auth.middlewares.js';
 
 // Day 8 imports
@@ -26,22 +22,24 @@ import { globalRateLimiter } from './middlewares/rateLimit.middlewares.js';
 import { db } from './db/index.js';
 import redis from './db/redis.js';
 import { sql } from 'drizzle-orm';
+import { env } from './config/env.js';
 
 const app = express();
+app.set('trust proxy', env.TRUST_PROXY ? 1 : false);
 
-app.use(helmet({
-    contentSecurityPolicy: false
-}));
+app.use(helmet());
 
 app.use(cors({
-    origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : '*',
+    origin(origin, callback) {
+        callback(null, !origin || env.allowedOrigins.includes(origin));
+    },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
 }));
 
 app.use(morgan('dev'));
-app.use(express.json());
+app.use(express.json({ limit: '20kb' }));
 
 // Mount global rate limiter (e.g. 100 requests per minute)
 app.use(globalRateLimiter(100, 60));
@@ -69,7 +67,7 @@ app.get('/health', async (req, res) => {
     try {
         await db.execute(sql`SELECT 1`);
     } catch (err) {
-        dbStatus = `down: ${err.message}`;
+        dbStatus = 'down';
     }
 
     try {
@@ -78,7 +76,7 @@ app.get('/health', async (req, res) => {
             redisStatus = 'down: unexpected ping response';
         }
     } catch (err) {
-        redisStatus = `down: ${err.message}`;
+        redisStatus = 'down';
     }
 
     const healthy = dbStatus === 'ok' && redisStatus === 'ok';
@@ -95,11 +93,13 @@ app.use('/checks', checkRoutes);
 app.use('/watchlist', watchlistRoutes);
 app.use('/notifications', notificationRoutes);
 
+app.use((req, res) => res.status(404).json({ success: false, message: 'Route not found' }));
+
 app.use(errorHandler);
 
-const PORT = process.env.PORT || 8000;
+const PORT = env.PORT;
 
-if (process.env.NODE_ENV !== 'test') {
+if (env.NODE_ENV !== 'test') {
     app.listen(PORT, () => {
         console.log(`Server listening on ${PORT}`);
     });

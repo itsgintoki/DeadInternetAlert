@@ -1,13 +1,12 @@
 import jwt from "jsonwebtoken";
+import { env } from '../config/env.js';
 
 export const authenticate = (req,res,next) =>{
     let token;
     const authHeader = req.headers.authorization;
 
-    if(authHeader && authHeader.startsWith("Bearer ")){
-        token = authHeader.split(" ")[1];
-    } else if(req.query.token){
-        token = req.query.token;
+    if(authHeader && /^Bearer\s+\S+$/i.test(authHeader)){
+        token = authHeader.replace(/^Bearer\s+/i, '');
     }
 
     if(!token){
@@ -15,7 +14,8 @@ export const authenticate = (req,res,next) =>{
     }
 
     try{
-        const decoded = jwt.verify(token,process.env.JWT_SECRET);
+        const decoded = jwt.verify(token, env.JWT_SECRET, { issuer: env.JWT_ISSUER });
+        if (decoded.type && decoded.type !== 'access') throw new Error('Invalid token type');
         req.user = decoded;
         next();
     }catch(err){

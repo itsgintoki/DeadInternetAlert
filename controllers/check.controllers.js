@@ -3,11 +3,36 @@ import { getCached, setCached } from "../utils/cache.utils.js";
 import { fetchGithubRepo, fetchGithubCommits, formatGithubData } from "../utils/github.utils.js";
 import { pingUrl } from "../utils/urlCheck.utils.js";
 
-import { watchListTable, watchlistTypeEnum } from '../models/watchlist.models.js';
-import { checkJobsTable, checkJobsStatusEnum } from '../models/checkjobs.models.js';
+import { watchListTable } from '../models/watchlist.models.js';
+import { checkJobsTable } from '../models/checkjobs.models.js';
 import { checkQueue } from '../queues/check.queues.js';
-import { runEulogyDigest, runPollScheduler } from '../queues/cron.worker.js';
-import { eq } from 'drizzle-orm';
+import { cronQueue } from '../queues/cron.queue.js';
+import { and, eq } from 'drizzle-orm';
+import { z } from 'zod';
+
+const idSchema = z.string().uuid();
+
+function parseId(value, res) {
+  const result = idSchema.safeParse(value);
+  if (!result.success) {
+    res.status(400).json({ message: 'id must be a valid UUID' });
+    return null;
+  }
+  return result.data;
+}
+
+async function enqueueCheck(entry, checkJobId, opts = {}) {
+  return checkQueue.add('check', {
+    checkJobId,
+    watchlistId: entry.id,
+    type: entry.type,
+    target: entry.target,
+  }, {
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 2000 },
+    ...opts,
+  });
+}
 
 function mapGithubError(err, res, next, target) {
   if (err.code === "ECONNABORTED" || err.message?.includes("timeout")) {
@@ -28,15 +53,16 @@ function mapGithubError(err, res, next, target) {
 
 export async function checkRepo(req, res, next) {
   const { target } = req.query;
-  if (!target) return res.status(400).json({ error: "target query param is required" });
+  if (typeof target !== 'string' || !target) return res.status(400).json({ error: "target query param is required" });
 
-  const parts = target.split('/');
-  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+  const normalizedTarget = target.trim().replace(/^(https?:\/\/)?(www\.)?github\.com\//i, '').replace(/\.git\/?$/i, '').replace(/\/+$/, '');
+  const parts = normalizedTarget.split('/');
+  if (parts.length !== 2 || !/^[A-Za-z0-9_.-]+$/.test(parts[0]) || !/^[A-Za-z0-9_.-]+$/.test(parts[1])) {
     return res.status(400).json({ error: "target must be in 'owner/repo' format" });
   }
 
   const [owner, repoName] = parts;
-  const cacheKey = `check:repo:${target}`;
+  const cacheKey = `check:repo:${normalizedTarget}`;
   
   try {
     const cached = await getCached(cacheKey);
@@ -50,13 +76,13 @@ export async function checkRepo(req, res, next) {
     await setCached(cacheKey, result);
     res.json(result);
   } catch (err) {
-    mapGithubError(err, res, next, target);
+    mapGithubError(err, res, next, normalizedTarget);
   }
 }
 
 export async function checkUrl(req, res, next) {
   const { target } = req.query;
-  if (!target) return res.status(400).json({ error: "target query param is required" });
+  if (typeof target !== 'string' || !target) return res.status(400).json({ error: "target query param is required" });
 
   const cacheKey = `check:url:${target}`;
   try {
@@ -86,18 +112,17 @@ export const triggerCheck = async (req, res, next) => {
 
     const [checkJob] = await db
       .insert(checkJobsTable)
-      .values({ type: entry.type, payload: { watchlistId: entry.id, target: entry.target }, status: 'WAITING' })
+      .values({ userId: entry.userId, watchlistId: entry.id, type: entry.type, payload: { target: entry.target }, status: 'WAITING' })
       .returning();
 
-    await checkQueue.add('check', {
-      checkJobId: checkJob.id,
-      watchlistId: entry.id,
-      type: entry.type,
-      target: entry.target,
-    }, {
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 2000 }
-    });
+    try {
+      await enqueueCheck(entry, checkJob.id);
+    } catch (error) {
+      await db.update(checkJobsTable)
+        .set({ status: 'FAILED', result: { error: 'Unable to enqueue check' } })
+        .where(eq(checkJobsTable.id, checkJob.id));
+      throw error;
+    }
 
     res.status(201).json({ message: 'Check queued', checkJobId: checkJob.id });
   } catch (err) {
@@ -107,8 +132,11 @@ export const triggerCheck = async (req, res, next) => {
 
 export const getCheckStatus = async (req, res, next) => {
   try {
-    const { id } = req.params;
-    const [job] = await db.select().from(checkJobsTable).where(eq(checkJobsTable.id, id));
+    const id = parseId(req.params.id, res);
+    if (!id) return;
+    const conditions = [eq(checkJobsTable.id, id)];
+    if (req.user.role !== 'admin') conditions.push(eq(checkJobsTable.userId, req.user.id));
+    const [job] = await db.select().from(checkJobsTable).where(and(...conditions));
     if (!job) return res.status(404).json({ message: 'Check Job not found!' });
     res.status(200).json(job);
   } catch (err) {
@@ -118,10 +146,12 @@ export const getCheckStatus = async (req, res, next) => {
 
 export const getFailedChecks = async (req, res, next) => {
   try {
+    const conditions = [eq(checkJobsTable.status, 'FAILED')];
+    if (req.user.role !== 'admin') conditions.push(eq(checkJobsTable.userId, req.user.id));
     const failedJobs = await db
       .select()
       .from(checkJobsTable)
-      .where(eq(checkJobsTable.status, 'FAILED'));
+      .where(and(...conditions));
     res.status(200).json(failedJobs);
   } catch (err) {
     next(err);
@@ -130,28 +160,32 @@ export const getFailedChecks = async (req, res, next) => {
 
 export const retryCheck = async (req, res, next) => {
   try {
-    const { id } = req.params;
-    const [job] = await db.select().from(checkJobsTable).where(eq(checkJobsTable.id, id));
+    const id = parseId(req.params.id, res);
+    if (!id) return;
+    const conditions = [eq(checkJobsTable.id, id)];
+    if (req.user.role !== 'admin') conditions.push(eq(checkJobsTable.userId, req.user.id));
+    const [job] = await db.select().from(checkJobsTable).where(and(...conditions));
 
     if (!job) return res.status(404).json({ message: 'Check job not found' });
     if (job.status !== 'FAILED') {
       return res.status(400).json({ message: 'Only failed check jobs can be retried' });
     }
 
+    const [entry] = await db.select().from(watchListTable).where(eq(watchListTable.id, job.watchlistId));
+    if (!entry) return res.status(404).json({ message: 'Watchlist entry not found' });
+
     await db
       .update(checkJobsTable)
       .set({ status: 'WAITING', result: null })
       .where(eq(checkJobsTable.id, id));
-
-    await checkQueue.add('check', {
-      checkJobId: job.id,
-      watchlistId: job.payload.watchlistId,
-      type: job.type,
-      target: job.payload.target,
-    }, {
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 2000 }
-    });
+    try {
+      await enqueueCheck(entry, job.id);
+    } catch (error) {
+      await db.update(checkJobsTable)
+        .set({ status: 'FAILED', result: { error: 'Unable to enqueue retry' } })
+        .where(eq(checkJobsTable.id, id));
+      throw error;
+    }
 
     res.status(200).json({ message: 'Retry queued', checkJobId: job.id });
   } catch (err) {
@@ -161,8 +195,8 @@ export const retryCheck = async (req, res, next) => {
 
 export const triggerEulogyDigest = async (req, res, next) => {
   try {
-    await runEulogyDigest();
-    res.status(200).json({ message: "Eulogy digest triggered successfully" });
+    await cronQueue.add('eulogy-digest', {});
+    res.status(202).json({ message: "Eulogy digest queued successfully" });
   } catch (err) {
     next(err);
   }
@@ -170,8 +204,8 @@ export const triggerEulogyDigest = async (req, res, next) => {
 
 export const triggerPollScheduler = async (req, res, next) => {
   try {
-    await runPollScheduler();
-    res.status(200).json({ message: "Poll scheduler triggered successfully" });
+    await cronQueue.add('poll-scheduler', {});
+    res.status(202).json({ message: "Poll scheduler queued successfully" });
   } catch (err) {
     next(err);
   }

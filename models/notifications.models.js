@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, boolean } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, timestamp, boolean, index } from "drizzle-orm/pg-core";
 import { UsersTable } from "./users.models.js";
 import { watchListTable } from "./watchlist.models.js";
 
@@ -25,4 +25,6 @@ export const notificationsTable = pgTable("notifications_table", {
     createdAt: timestamp('created_at')
         .defaultNow()
         .notNull(),
-});
+}, (table) => [
+    index('notifications_user_created_at_idx').on(table.userId, table.createdAt),
+]);

@@ -1,13 +1,10 @@
-import axios from "axios";
+import { normalizeHttpTarget, requestUrlStatus } from './httpTarget.utils.js';
 
 export async function pingUrl(target) {
-    try {
-        const res = await axios.head(target, { timeout: 5000 });
-        return formatUrlCheck({ url: target, status: res.status, alive: res.status < 400 });
-    } catch (err) {
-        const status = err.response?.status ?? null;
-        return formatUrlCheck({ url: target, status, alive: false })
-    }
+    const url = await normalizeHttpTarget(target);
+    let status = await requestUrlStatus(url);
+    if (status === 405 || status === 501) status = await requestUrlStatus(url, 'GET');
+    return formatUrlCheck({ url, status, alive: status < 400 });
 }
 
 export function formatUrlCheck({ url, status, alive }) {

@@ -1,15 +1,20 @@
 import { Worker } from "bullmq";
 import redis from "../db/redis.js";
 import { sendAlertEmail } from "../utils/email.utils.js";
+import { db } from '../db/index.js';
+import { watchListTable } from '../models/watchlist.models.js';
+import { inArray } from 'drizzle-orm';
 
 export const emailWorker = new Worker(
   "emailQueue",
   async (job) => {
-    const { email, items } = job.data;
-    const subject = `Eulogy Digest: Your dead watch items`;
-    const textContent = `Hello,\n\nHere is your daily eulogy digest for items that have been flatlining for over 24 hours:\n\n${items.join("\n")}\n\nBest,\nDeadInternetAlert Team`;
-    
+    const { email, subject, textContent, digestWatchlistIds } = job.data;
     await sendAlertEmail(email, subject, textContent);
+    if (Array.isArray(digestWatchlistIds) && digestWatchlistIds.length) {
+      await db.update(watchListTable)
+        .set({ lastDigestSentAt: new Date() })
+        .where(inArray(watchListTable.id, digestWatchlistIds));
+    }
   },
   { connection: redis }
 );

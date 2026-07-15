@@ -1,24 +1,21 @@
 import nodemailer from "nodemailer";
+import { env } from '../config/env.js';
 
 const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST || "sandbox.smtp.mailtrap.io",
-    port: parseInt(process.env.SMTP_PORT || "2525"),
+    host: env.SMTP_HOST,
+    port: env.SMTP_PORT,
+    secure: env.SMTP_SECURE,
     auth: {
-        user: process.env.SMTP_USER || "",
-        pass: process.env.SMTP_PASS || ""
+        user: env.SMTP_USER,
+        pass: env.SMTP_PASS,
     }
 });
 
 export async function sendAlertEmail(toEmail, subject, textContent) {
-    try {
-        await transporter.sendMail({
-            from: '"Dead Internet Alert" <no-reply@deadinternetalert.com>',
-            to: toEmail,
-            subject,
-            text: textContent
-        });
-        console.log(`Email alert sent successfully to ${toEmail}`);
-    } catch (err) {
-        console.error("Failed to send email alert:", err);
-    }
+    await transporter.sendMail({
+        from: '"Dead Internet Alert" <no-reply@deadinternetalert.com>',
+        to: toEmail,
+        subject,
+        text: textContent
+    });
 }

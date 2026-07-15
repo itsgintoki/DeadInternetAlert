@@ -39,7 +39,7 @@ export async function fetchGithubRepo(owner, repo) {
 
 export async function fetchGithubCommits(owner, repo, sinceDate) {
     const { data } = await githubClient.get(`https://api.github.com/repos/${owner}/${repo}/commits`, {
-        params: { since: sinceDate }
+        params: { since: sinceDate, per_page: 100 }
     });
     return data;
 }
@@ -52,6 +52,7 @@ export function formatGithubData(repoData, commits) {
         openIssues: repoData.open_issues_count,
         stars: repoData.stargazers_count,
         commitsLast7Days: Array.isArray(commits) ? commits.length : 0,
+        commitsLast7DaysTruncated: Array.isArray(commits) && commits.length === 100,
         checkedAt: new Date().toISOString()
     };
 }

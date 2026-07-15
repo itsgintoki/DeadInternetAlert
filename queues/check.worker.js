@@ -7,23 +7,13 @@ import { watchListTable } from "../models/watchlist.models.js";
 import { eq } from "drizzle-orm";
 import { pingUrl } from '../utils/urlCheck.utils.js';
 import { fetchGithubRepo, fetchGithubCommits, formatGithubData } from '../utils/github.utils.js';
-import { sendAlertEmail } from '../utils/email.utils.js';
-import { notificationQueue } from "./check.queues.js";
-import axios from "axios";
+import { emailQueue, notificationQueue } from "./check.queues.js";
+import { env } from '../config/env.js';
 
 async function runCheck(type, target) {
     switch (type) {
         case 'url': {
-            try {
-                const res = await axios.head(target, { timeout: 5000 });
-                return { url: target, status: res.status, alive: res.status < 400, checkedAt: new Date().toISOString() };
-            } catch (err) {
-                const status = err.response?.status;
-                if (status && status < 500) {
-                    return { url: target, status, alive: false, checkedAt: new Date().toISOString() };
-                }
-                throw err;
-            }
+            return pingUrl(target);
         }
 
         case 'repo': {
@@ -78,6 +68,7 @@ const makeProcessor = (workerId) => async (job) => {
             id: watchListTable.id,
             userId: watchListTable.userId,
             target: watchListTable.target,
+            type: watchListTable.type,
             lastStatus: watchListTable.lastStatus,
             email: UsersTable.email
         })
@@ -89,20 +80,28 @@ const makeProcessor = (workerId) => async (job) => {
         throw new Error(`Watchlist entry #${watchlistId} not found`);
     }
 
-    const result = await runCheck(type, target);
+    if (watchlistEntry.type !== type || watchlistEntry.target !== target) {
+        throw new Error('Queued check data does not match the watchlist entry');
+    }
 
-    const currentStatus = computeStatus(type, result);
+    const result = await runCheck(watchlistEntry.type, watchlistEntry.target);
+
+    const currentStatus = computeStatus(watchlistEntry.type, result);
     const oldStatus = watchlistEntry.lastStatus;
 
     if (oldStatus !== currentStatus) {
         await db.update(watchListTable)
-            .set({ lastStatus: currentStatus, statusChangedAt: new Date() })
+            .set({ lastStatus: currentStatus, statusChangedAt: new Date(), lastDigestSentAt: null })
             .where(eq(watchListTable.id, watchlistId));
 
         if (oldStatus !== null) {
             const subject = `ALERT: Status changed for ${target}`;
             const textContent = `Hello,\n\nThe status of your watched item "${target}" (${type}) has changed from "${oldStatus}" to "${currentStatus}".\n\nChecked At: ${new Date().toISOString()}\n\nBest,\nDeadInternetAlert Tracker`;
-            await sendAlertEmail(watchlistEntry.email, subject, textContent);
+            await emailQueue.add('status-alert', {
+                email: watchlistEntry.email,
+                subject,
+                textContent,
+            });
 
             await notificationQueue.add("notify", {
                 userId: watchlistEntry.userId,
@@ -125,7 +124,7 @@ const makeProcessor = (workerId) => async (job) => {
 const workerOptions = {
     connection: redis,
     concurrency: 3,
-    ...(process.env.NODE_ENV !== "test" && {
+    ...(env.NODE_ENV !== "test" && {
         limiter: {
             max: 10,
             duration: 60000

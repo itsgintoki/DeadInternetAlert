@@ -6,9 +6,16 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch index",
+    "start": "node index.js",
+    "worker": "node worker.js",
+    "scheduler": "node scheduler.js",
+    "db:migrate": "node scripts/migrate.js",
+    "admin:grant": "node scripts/grant-admin.js",
     "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "test": "node --test"
   },
+  "packageManager": "pnpm@9.0.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/itsgintoki/DeadInternetAlert.git"

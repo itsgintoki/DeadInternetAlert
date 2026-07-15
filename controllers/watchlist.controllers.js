@@ -1,6 +1,7 @@
 import db from "../db/index.js";
 import { watchListTable, watchlistTypeEnum } from "../models/watchlist.models.js";
 import { eq, and } from "drizzle-orm";
+import { normalizeHttpTarget } from '../utils/httpTarget.utils.js';
 
 export const addToWatchList = async (req, res, next) => {
     try {
@@ -10,6 +11,11 @@ export const addToWatchList = async (req, res, next) => {
             normalizedTarget = normalizedTarget.replace(/^(https?:\/\/)?(www\.)?github\.com\//i, "");
             normalizedTarget = normalizedTarget.replace(/\.git\/?$/i, "");
             normalizedTarget = normalizedTarget.replace(/\/+$/, "");
+            if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(normalizedTarget)) {
+                return res.status(400).json({ message: 'Repository target must be in owner/repository format' });
+            }
+        } else {
+            normalizedTarget = await normalizeHttpTarget(normalizedTarget);
         }
 
         const [entry] = await db
@@ -19,6 +25,7 @@ export const addToWatchList = async (req, res, next) => {
 
         res.status(201).json(entry);
     } catch (err) {
+        if (err.code === '23505') return res.status(409).json({ message: 'This target is already in your watchlist' });
         next(err);
     }
 

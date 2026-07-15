@@ -7,34 +7,24 @@ import redis from "../db/redis.js";
  * @param {number} limit - Maximum number of requests allowed in the window
  * @param {number} windowSec - Window size in seconds
  */
-export const globalRateLimiter = (limit = 100, windowSec = 60) => {
+export const globalRateLimiter = (limit = 100, windowSec = 60, { failClosed = false } = {}) => {
   return async (req, res, next) => {
     const ip = req.ip || req.headers["x-forwarded-for"] || req.socket.remoteAddress;
     const key = `ip:${ip}:count`;
 
     try {
-      const multi = redis.multi();
-      multi.incr(key);
-      multi.ttl(key);
-
-      const results = await multi.exec();
-      
-      if (!results || results.length < 2) {
-        throw new Error("Redis multi command failed to return results");
-      }
-
-      const count = results[0][1];
-      const ttl = results[1][1];
-
-      // If it is a new key or TTL was not set (ttl is -1 or less)
-      if (ttl === -1 || ttl === -2) {
-        await redis.expire(key, windowSec);
-      }
+      const [count, ttl] = await redis.eval(
+        'local count = redis.call("INCR", KEYS[1]); if count == 1 then redis.call("EXPIRE", KEYS[1], ARGV[1]); end; return {count, redis.call("TTL", KEYS[1])}',
+        1,
+        key,
+        windowSec,
+      );
 
       res.setHeader("X-RateLimit-Limit", limit);
       res.setHeader("X-RateLimit-Remaining", Math.max(0, limit - count));
 
       if (count > limit) {
+        res.setHeader('Retry-After', Math.max(1, ttl));
         return res.status(429).json({
           success: false,
           message: "Too many requests, please try again later.",
@@ -43,7 +33,7 @@ export const globalRateLimiter = (limit = 100, windowSec = 60) => {
       next();
     } catch (err) {
       console.error("Rate limiter middleware error:", err);
-      // Soft-fail: if Redis fails, still allow the request to proceed in production
+      if (failClosed) return res.status(503).json({ success: false, message: 'Rate limiting is temporarily unavailable.' });
       next();
     }
   };
