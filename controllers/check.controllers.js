@@ -6,7 +6,7 @@ import { pingUrl } from "../utils/urlCheck.utils.js";
 import { watchListTable, watchlistTypeEnum } from '../models/watchlist.models.js';
 import { checkJobsTable, checkJobsStatusEnum } from '../models/checkjobs.models.js';
 import { checkQueue } from '../queues/check.queues.js';
-import { runEulogyDigest } from '../queues/cron.worker.js';
+import { runEulogyDigest, runPollScheduler } from '../queues/cron.worker.js';
 import { eq } from 'drizzle-orm';
 
 function mapGithubError(err, res, next, target) {
@@ -159,6 +159,15 @@ export const triggerEulogyDigest = async (req, res, next) => {
   try {
     await runEulogyDigest();
     res.status(200).json({ message: "Eulogy digest triggered successfully" });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const triggerPollScheduler = async (req, res, next) => {
+  try {
+    await runPollScheduler();
+    res.status(200).json({ message: "Poll scheduler triggered successfully" });
   } catch (err) {
     next(err);
   }

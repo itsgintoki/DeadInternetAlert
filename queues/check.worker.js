@@ -62,101 +62,120 @@ function computeStatus(type, result) {
     return 'unknown';
 }
 
-export const checkWorker = new Worker(
-    'checkQueue',
-    async (job) => {
-        const { checkJobId, watchlistId, type, target } = job.data;
+const makeProcessor = (workerId) => async (job) => {
+    const { checkJobId, watchlistId, type, target } = job.data;
 
-        await job.log(`Checking ${type} target="${target}" (watchlist #${watchlistId})`);
+    console.log(`[${workerId}] Processing job ${job.id} for target "${target}"`);
+    await job.log(`[${workerId}] Checking ${type} target="${target}" (watchlist #${watchlistId})`);
 
-        const [watchlistEntry] = await db
-            .select({
-                id: watchListTable.id,
-                userId: watchListTable.userId,
-                target: watchListTable.target,
-                lastStatus: watchListTable.lastStatus,
-                email: UsersTable.email
-            })
-            .from(watchListTable)
-            .innerJoin(UsersTable, eq(watchListTable.userId, UsersTable.id))
+    const [watchlistEntry] = await db
+        .select({
+            id: watchListTable.id,
+            userId: watchListTable.userId,
+            target: watchListTable.target,
+            lastStatus: watchListTable.lastStatus,
+            email: UsersTable.email
+        })
+        .from(watchListTable)
+        .innerJoin(UsersTable, eq(watchListTable.userId, UsersTable.id))
+        .where(eq(watchListTable.id, watchlistId));
+
+    if (!watchlistEntry) {
+        throw new Error(`Watchlist entry #${watchlistId} not found`);
+    }
+
+    const result = await runCheck(type, target);
+
+    const currentStatus = computeStatus(type, result);
+    const oldStatus = watchlistEntry.lastStatus;
+
+    if (oldStatus !== currentStatus) {
+        await db.update(watchListTable)
+            .set({ lastStatus: currentStatus, statusChangedAt: new Date() })
             .where(eq(watchListTable.id, watchlistId));
 
-        if (!watchlistEntry) {
-            throw new Error(`Watchlist entry #${watchlistId} not found`);
-        }
+        if (oldStatus !== null) {
+            const subject = `ALERT: Status changed for ${target}`;
+            const textContent = `Hello,\n\nThe status of your watched item "${target}" (${type}) has changed from "${oldStatus}" to "${currentStatus}".\n\nChecked At: ${new Date().toISOString()}\n\nBest,\nDeadInternetAlert Tracker`;
+            await sendAlertEmail(watchlistEntry.email, subject, textContent);
 
-        const result = await runCheck(type, target);
-
-        const currentStatus = computeStatus(type, result);
-        const oldStatus = watchlistEntry.lastStatus;
-
-        if (oldStatus !== currentStatus) {
-            await db.update(watchListTable)
-                .set({ lastStatus: currentStatus, statusChangedAt: new Date() })
-                .where(eq(watchListTable.id, watchlistId));
-
-            if (oldStatus !== null) {
-                const subject = `ALERT: Status changed for ${target}`;
-                const textContent = `Hello,\n\nThe status of your watched item "${target}" (${type}) has changed from "${oldStatus}" to "${currentStatus}".\n\nChecked At: ${new Date().toISOString()}\n\nBest,\nDeadInternetAlert Tracker`;
-                await sendAlertEmail(watchlistEntry.email, subject, textContent);
-
-                await notificationQueue.add("notify", {
-                    userId: watchlistEntry.userId,
-                    watchlistId: watchlistEntry.id,
-                    message: `Watchlist item "${target}" status changed from "${oldStatus}" to "${currentStatus}"`
-                });
-            }
-        }
-
-        return result;
-    },
-    { connection: redis }
-);
-
-checkWorker.on('active', async (job) => {
-    const { checkJobId } = job.data;
-    if (checkJobId) {
-        try {
-            await db.update(checkJobsTable)
-                .set({ status: 'ACTIVE' })
-                .where(eq(checkJobsTable.id, checkJobId));
-        } catch (err) {
-            console.error(`Failed to set job status to ACTIVE for checkJobId ${checkJobId}:`, err);
+            await notificationQueue.add("notify", {
+                userId: watchlistEntry.userId,
+                watchlistId: watchlistEntry.id,
+                message: `Watchlist item "${target}" status changed from "${oldStatus}" to "${currentStatus}"`
+            });
         }
     }
-});
 
-checkWorker.on('completed', async (job, result) => {
-    console.log(`job ${job.id} completed`);
-    const { checkJobId } = job.data;
-    if (checkJobId) {
-        try {
-            await db.update(checkJobsTable)
-                .set({ status: 'COMPLETED', result })
-                .where(eq(checkJobsTable.id, checkJobId));
-        } catch (err) {
-            console.error(`Failed to set job status to COMPLETED for checkJobId ${checkJobId}:`, err);
+    return result;
+};
+
+const workerOptions = {
+    connection: redis,
+    concurrency: 3,
+    ...(process.env.NODE_ENV !== "test" && {
+        limiter: {
+            max: 10,
+            duration: 60000
         }
-    }
-});
+    })
+};
 
-checkWorker.on('failed', async (job, err) => {
-    console.error(`job ${job?.id} failed: ${err.message}`);
-    if (!job) return;
+export const checkWorker1 = new Worker('checkQueue', makeProcessor('Worker-1'), workerOptions);
+export const checkWorker2 = new Worker('checkQueue', makeProcessor('Worker-2'), workerOptions);
 
-    const { checkJobId } = job.data;
-    if (checkJobId) {
-        try {
-            const attemptsMade = job.attemptsMade;
-            const maxAttempts = job.opts.attempts || 1;
-            
-            if (attemptsMade >= maxAttempts) {
+const workers = [
+    { instance: checkWorker1, name: 'Worker-1' },
+    { instance: checkWorker2, name: 'Worker-2' }
+];
+
+for (const { instance, name } of workers) {
+    instance.on('active', async (job) => {
+        console.log(`[${name}] job ${job.id} is active`);
+        const { checkJobId } = job.data;
+        if (checkJobId) {
+            try {
                 await db.update(checkJobsTable)
-                    .set({ status: 'FAILED', result: { error: err.message } })
+                    .set({ status: 'ACTIVE' })
                     .where(eq(checkJobsTable.id, checkJobId));
+            } catch (err) {
+                console.error(`[${name}] Failed to set job status to ACTIVE for checkJobId ${checkJobId}:`, err);
             }
-        } catch (dbErr) {
-            console.error(`Failed to set job status to FAILED for checkJobId ${checkJobId}:`, dbErr);
         }
-    }
-});
+    });
+
+    instance.on('completed', async (job, result) => {
+        console.log(`[${name}] job ${job.id} completed`);
+        const { checkJobId } = job.data;
+        if (checkJobId) {
+            try {
+                await db.update(checkJobsTable)
+                    .set({ status: 'COMPLETED', result })
+                    .where(eq(checkJobsTable.id, checkJobId));
+            } catch (err) {
+                console.error(`[${name}] Failed to set job status to COMPLETED for checkJobId ${checkJobId}:`, err);
+            }
+        }
+    });
+
+    instance.on('failed', async (job, err) => {
+        console.error(`[${name}] job ${job?.id} failed: ${err.message}`);
+        if (!job) return;
+
+        const { checkJobId } = job.data;
+        if (checkJobId) {
+            try {
+                const attemptsMade = job.attemptsMade;
+                const maxAttempts = job.opts.attempts || 1;
+                
+                if (attemptsMade >= maxAttempts) {
+                    await db.update(checkJobsTable)
+                        .set({ status: 'FAILED', result: { error: err.message } })
+                        .where(eq(checkJobsTable.id, checkJobId));
+                }
+            } catch (dbErr) {
+                console.error(`[${name}] Failed to set job status to FAILED for checkJobId ${checkJobId}:`, dbErr);
+            }
+        }
+    });
+}

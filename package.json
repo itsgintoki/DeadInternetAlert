@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "node --watch index",
     "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "test": "vitest run"
   },
   "repository": {
     "type": "git",
@@ -21,6 +22,8 @@
   },
   "homepage": "https://github.com/itsgintoki/DeadInternetAlert#readme",
   "dependencies": {
+    "@bull-board/api": "^8.1.2",
+    "@bull-board/express": "^8.1.2",
     "argon2": "^0.44.0",
     "axios": "^1.18.1",
     "bullmq": "^5.79.2",
@@ -38,6 +41,8 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "drizzle-kit": "^0.31.10"
+    "drizzle-kit": "^0.31.10",
+    "supertest": "^7.2.2",
+    "vitest": "^4.1.10"
   }
 }

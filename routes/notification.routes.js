@@ -7,5 +7,6 @@ router.use(authenticate);
 
 router.get("/", getNotifications);
 router.post("/:id/read", markAsRead);
+router.patch("/:id/read", markAsRead);
 
 export default router;
