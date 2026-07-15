@@ -7,7 +7,7 @@ router.use(authenticate);
 
 router.get("/repo", checkRepo);
 router.get("/url", checkUrl);
-router.post('/trigger', authorize('admin'), triggerCheck);
+router.post('/trigger', triggerCheck);
 router.post('/eulogy-trigger', authorize('admin'), triggerEulogyDigest);
 router.post('/poll-trigger', authorize('admin'), triggerPollScheduler);
 router.get('/failed', getFailedChecks);

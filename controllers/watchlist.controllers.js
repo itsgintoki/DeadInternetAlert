@@ -5,9 +5,16 @@ import { eq, and } from "drizzle-orm";
 export const addToWatchList = async (req, res, next) => {
     try {
         const { type, target } = req.body;
+        let normalizedTarget = target.trim();
+        if (type === 'repo') {
+            normalizedTarget = normalizedTarget.replace(/^(https?:\/\/)?(www\.)?github\.com\//i, "");
+            normalizedTarget = normalizedTarget.replace(/\.git\/?$/i, "");
+            normalizedTarget = normalizedTarget.replace(/\/+$/, "");
+        }
+
         const [entry] = await db
             .insert(watchListTable)
-            .values({ userId: req.user.id, type, target })
+            .values({ userId: req.user.id, type, target: normalizedTarget })
             .returning()
 
         res.status(201).json(entry);

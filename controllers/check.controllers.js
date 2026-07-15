@@ -80,6 +80,10 @@ export const triggerCheck = async (req, res, next) => {
     const [entry] = await db.select().from(watchListTable).where(eq(watchListTable.id, watchlistId));
     if (!entry) return res.status(404).json({ message: 'Watchlist entry not found' });
 
+    if (req.user.role !== 'admin' && entry.userId !== req.user.id) {
+      return res.status(403).json({ message: 'Forbidden: You do not own this watchlist entry' });
+    }
+
     const [checkJob] = await db
       .insert(checkJobsTable)
       .values({ type: entry.type, payload: { watchlistId: entry.id, target: entry.target }, status: 'WAITING' })
