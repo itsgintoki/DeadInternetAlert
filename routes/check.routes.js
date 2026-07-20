@@ -9,11 +9,7 @@ router.use(authenticate);
 
 router.get("/repo", checkRepo);
 router.get("/url", checkUrl);
-<<<<<<< HEAD
 router.post('/trigger', validate(triggerCheckSchema), triggerCheck);
-=======
-router.post('/trigger', authorize('admin'), triggerCheck);
->>>>>>> parent of df0dfee (add pnpm-workspace.yaml with build configuration options)
 router.post('/eulogy-trigger', authorize('admin'), triggerEulogyDigest);
 router.post('/poll-trigger', authorize('admin'), triggerPollScheduler);
 router.get('/failed', getFailedChecks);
