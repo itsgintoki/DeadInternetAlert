@@ -17,12 +17,7 @@ async function runCheck(type, target) {
         }
 
         case 'repo': {
-            let cleanTarget = target.trim();
-            cleanTarget = cleanTarget.replace(/^(https?:\/\/)?(www\.)?github\.com\//i, "");
-            cleanTarget = cleanTarget.replace(/\.git\/?$/i, "");
-            cleanTarget = cleanTarget.replace(/\/+$/, "");
-
-            const [owner, repoName] = cleanTarget.split('/');
+            const [owner, repoName] = target.split('/');
             if (!owner || !repoName) {
                 throw new Error(`Invalid target format for repo: ${target}`);
             }
@@ -107,13 +102,6 @@ const makeProcessor = (workerId) => async (job) => {
                 userId: watchlistEntry.userId,
                 watchlistId: watchlistEntry.id,
                 message: `Watchlist item "${target}" status changed from "${oldStatus}" to "${currentStatus}"`
-            });
-        } else {
-            // Initial status resolved - generate in-app notification but no email
-            await notificationQueue.add("notify", {
-                userId: watchlistEntry.userId,
-                watchlistId: watchlistEntry.id,
-                message: `Watchlist item "${target}" is now actively tracked (Status: ${currentStatus.toUpperCase()})`
             });
         }
     }

@@ -11,16 +11,11 @@ export const addToWatchList = async (req, res, next) => {
             normalizedTarget = normalizedTarget.replace(/^(https?:\/\/)?(www\.)?github\.com\//i, "");
             normalizedTarget = normalizedTarget.replace(/\.git\/?$/i, "");
             normalizedTarget = normalizedTarget.replace(/\/+$/, "");
-            if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(normalizedTarget)) {
-                return res.status(400).json({ message: 'Repository target must be in owner/repository format' });
-            }
-        } else {
-            normalizedTarget = await normalizeHttpTarget(normalizedTarget);
         }
 
         const [entry] = await db
             .insert(watchListTable)
-            .values({ userId: req.user.id, type, target: normalizedTarget })
+            .values({ userId: req.user.id, type, target })
             .returning()
 
         res.status(201).json(entry);
